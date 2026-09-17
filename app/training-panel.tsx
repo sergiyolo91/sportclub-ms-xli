@@ -10,6 +10,10 @@ type TemplateDay = { id: string; name: string; workout_type: 'REGULAR' | 'HOME' 
 type SavedSet = { id: string; exerciseId: string; exerciseName: string; setNumber: number; weight?: number | null; reps?: number | null; duration?: number | null }
 type ReferenceSet = { weight_kg: number | null; repetitions: number | null; duration_seconds: number | null; estimated_1rm: number | null; completed_at: string }
 
+function tactile(pattern: number | number[] = 12) {
+  if (typeof navigator !== 'undefined') (navigator as any).vibrate?.(pattern)
+}
+
 export default function TrainingPanel({ userId, groupId, exercises }: { userId: string; groupId: string; exercises: Exercise[] }) {
   const supabase = useMemo(() => createClient(), [])
   const [templates, setTemplates] = useState<TemplateDay[]>([])
@@ -28,8 +32,12 @@ export default function TrainingPanel({ userId, groupId, exercises }: { userId: 
   const [message, setMessage] = useState('')
   const [lastSet, setLastSet] = useState<ReferenceSet | null>(null)
   const [best1rm, setBest1rm] = useState<number | null>(null)
+  const [savedPulse, setSavedPulse] = useState(false)
+  const [prFlash, setPrFlash] = useState(false)
 
   const exercise = exercises.find(e => e.id === exerciseId)
+  const exerciseSets = sets.filter(s => s.exerciseId === exerciseId)
+  const progressPercent = activeTemplate ? ((templateIndex + 1) / activeTemplate.exercises.length) * 100 : 0
 
   useEffect(() => { void loadTemplates() }, [groupId])
   useEffect(() => {
@@ -43,6 +51,7 @@ export default function TrainingPanel({ userId, groupId, exercises }: { userId: 
       .select('id,name,workout_type,workout_template_exercises(position,exercises(id,name,category,measurement_type))')
       .eq('group_id', groupId)
       .eq('visibility', 'GROUP')
+      .eq('is_active', true)
       .order('name')
 
     const normalized: TemplateDay[] = (data || []).map((row: any) => ({
@@ -97,6 +106,7 @@ export default function TrainingPanel({ userId, groupId, exercises }: { userId: 
     else {
       setWorkoutId(data.id); setWorkoutType(type); setActiveTemplate(null); setTemplateIndex(0); setOpen(true)
       if (exercises[0]) setExerciseId(exercises[0].id)
+      tactile()
     }
     setBusy(false)
   }
@@ -123,6 +133,7 @@ export default function TrainingPanel({ userId, groupId, exercises }: { userId: 
     for (const row of (exerciseRows || []) as any[]) ids[row.exercise_id] = row.id
     setWeIds(ids); setWorkoutId(workout.id); setWorkoutType(template.workout_type === 'HOME' ? 'HOME' : 'REGULAR')
     setActiveTemplate(template); setTemplateIndex(0); setExerciseId(template.exercises[0].id); setOpen(true); setBusy(false)
+    tactile(14)
   }
 
   async function ensureWorkoutExercise() {
@@ -148,9 +159,18 @@ export default function TrainingPanel({ userId, groupId, exercises }: { userId: 
       const { data, error } = await supabase.from('workout_sets').insert(payload).select('id,estimated_1rm').single()
       if (error) throw error
       setSets(prev => [...prev, { id: data.id, exerciseId, exerciseName: exercise.name, setNumber, weight: payload.weight_kg ?? null, reps: payload.repetitions ?? null, duration: payload.duration_seconds ?? null }])
+      setSavedPulse(true)
+      window.setTimeout(() => setSavedPulse(false), 520)
+      tactile(12)
       if (data.estimated_1rm != null) {
         const current = Number(data.estimated_1rm)
-        if (best1rm == null || current > best1rm) { setBest1rm(current); setMessage(`Neuer persönlicher Bestwert: ${current.toFixed(1)} kg geschätztes 1RM.`) }
+        if (best1rm == null || current > best1rm) {
+          setBest1rm(current)
+          setMessage(`Neuer persönlicher Bestwert: ${current.toFixed(1)} kg geschätztes 1RM.`)
+          setPrFlash(true)
+          tactile([20, 35, 24])
+          window.setTimeout(() => setPrFlash(false), 1350)
+        }
       }
     } catch (err: any) { setMessage(err.message || 'Satz konnte nicht gespeichert werden.') }
     finally { setBusy(false) }
@@ -160,6 +180,7 @@ export default function TrainingPanel({ userId, groupId, exercises }: { userId: 
     if (!activeTemplate) return
     const next = Math.max(0, Math.min(activeTemplate.exercises.length - 1, index))
     setTemplateIndex(next); setExerciseId(activeTemplate.exercises[next].id); setMessage('')
+    tactile(7)
   }
 
   async function cancelWorkout() {
@@ -174,13 +195,14 @@ export default function TrainingPanel({ userId, groupId, exercises }: { userId: 
     setBusy(true)
     const { error } = await supabase.rpc('finish_workout', { p_workout_id: workoutId })
     if (error) { setMessage(error.message); setBusy(false); return }
+    tactile([16, 30, 16])
     resetWorkout('Training gespeichert. Stark.')
     setBusy(false)
   }
 
   function resetWorkout(doneMessage: string) {
     setOpen(false); setWorkoutId(null); setSets([]); setWeIds({}); setWeight(''); setReps(''); setDuration('')
-    setActiveTemplate(null); setTemplateIndex(0); setMessage(doneMessage)
+    setActiveTemplate(null); setTemplateIndex(0); setMessage(doneMessage); setSavedPulse(false); setPrFlash(false)
   }
 
   function lastPerformanceText() {
@@ -192,9 +214,10 @@ export default function TrainingPanel({ userId, groupId, exercises }: { userId: 
 
   if (!open) return <div className={styles.trainingStart}>
     {templates.length > 0 && <div className={styles.templateBlock}>
-      <div className="eyebrow">Gruppentrainingstage</div>
+      <div className={styles.trainingSectionHead}><span>Trainingstage</span><small>{templates.length} für eure Gruppe</small></div>
       <div className={styles.templateList}>
-        {templates.map(template => <button key={template.id} className={styles.templateCard} onClick={() => beginTemplate(template)} disabled={busy}>
+        {templates.map((template, index) => <button key={template.id} className={styles.templateCard} onClick={() => beginTemplate(template)} disabled={busy}>
+          <div className={styles.templateIndex}>{String(index + 1).padStart(2, '0')}</div>
           <span><strong>{template.name}</strong><small>{template.exercises.length} Übungen · {template.exercises.slice(0,3).map(e => e.name).join(' · ')}{template.exercises.length > 3 ? ' …' : ''}</small></span>
           <ChevronRight size={19}/>
         </button>)}
@@ -202,56 +225,63 @@ export default function TrainingPanel({ userId, groupId, exercises }: { userId: 
     </div>}
     <div className={styles.freeActions}>
       <button className="primary-btn" onClick={() => begin('REGULAR')} disabled={busy}><Dumbbell size={18}/> Freies Training</button>
-      <button className="secondary-btn" onClick={() => begin('HOME')} disabled={busy}><Home size={18}/> Zuhause trainieren</button>
+      <button className="secondary-btn" onClick={() => begin('HOME')} disabled={busy}><Home size={18}/> Zuhause</button>
     </div>
     {message && <p className="notice">{message}</p>}
   </div>
 
   return <div className="training-overlay">
-    <section className="training-sheet">
-      <header className="training-head">
+    <section className={`training-sheet sport-mode ${prFlash ? 'pr-flash' : ''}`}>
+      <header className="training-head sport-head">
         <div>
           <div className="eyebrow">{activeTemplate ? activeTemplate.name : workoutType === 'HOME' ? 'Home-Workout' : 'Training läuft'}</div>
-          <h2>{activeTemplate ? `Übung ${templateIndex + 1} von ${activeTemplate.exercises.length}` : 'Satz eintragen'}</h2>
+          <h2>{activeTemplate ? `Übung ${templateIndex + 1} / ${activeTemplate.exercises.length}` : 'Freies Training'}</h2>
         </div>
-        <button className="icon-btn" onClick={cancelWorkout} aria-label="Training abbrechen"><X size={20}/></button>
+        <button className="icon-btn close-training" onClick={cancelWorkout} aria-label="Training abbrechen"><X size={20}/></button>
       </header>
 
-      {activeTemplate ? <div className={styles.exerciseHeadline}><strong>{exercise?.name}</strong><span>{exercise?.category}</span></div> : <>
+      {activeTemplate && <div className="workout-progress"><span style={{ width: `${progressPercent}%` }}/></div>}
+
+      {activeTemplate ? <div className={styles.exerciseHeadline}>
+        <span>{exercise?.category}</span>
+        <strong>{exercise?.name}</strong>
+        <small>{exerciseSets.length} {exerciseSets.length === 1 ? 'Satz' : 'Sätze'} gespeichert</small>
+      </div> : <>
         <label className="field-label">Übung</label>
-        <select className="select-input" value={exerciseId} onChange={e => setExerciseId(e.target.value)}>
+        <select className="select-input sport-select" value={exerciseId} onChange={e => setExerciseId(e.target.value)}>
           {exercises.map(ex => <option key={ex.id} value={ex.id}>{ex.name} · {ex.category}</option>)}
         </select>
       </>}
 
       <div className={styles.referenceGrid}>
         <div className={styles.referenceCard}><div className="eyebrow">Letztes Mal</div><strong>{lastPerformanceText()}</strong></div>
-        <div className={styles.recordCard}><div className="eyebrow">Persönlicher Rekord</div><strong><Trophy size={15}/>{best1rm == null ? '–' : `${best1rm.toFixed(1)} kg`}</strong></div>
+        <div className={`${styles.recordCard} ${prFlash ? styles.recordGlow : ''}`}><div className="eyebrow">Bestwert</div><strong><Trophy size={15}/>{best1rm == null ? '–' : `${best1rm.toFixed(1)} kg`}</strong></div>
       </div>
 
-      {exercise?.measurement_type === 'TIME' ? <>
-        <label className="field-label">Dauer in Sekunden</label>
-        <input inputMode="numeric" value={duration} onChange={e => setDuration(e.target.value)} placeholder="z. B. 60" />
-      </> : <div className="input-grid">
-        {exercise?.measurement_type !== 'REPS' && <div><label className="field-label">Gewicht (kg)</label><input inputMode="decimal" value={weight} onChange={e => setWeight(e.target.value.replace(',','.'))} placeholder="82.5" /></div>}
-        <div><label className="field-label">Wiederholungen</label><input inputMode="numeric" value={reps} onChange={e => setReps(e.target.value)} placeholder="10" /></div>
+      {exercise?.measurement_type === 'TIME' ? <div className="sport-input-single">
+        <label className="field-label">Sekunden</label>
+        <input className="sport-number-input" inputMode="numeric" value={duration} onChange={e => setDuration(e.target.value)} placeholder="60" />
+      </div> : <div className="input-grid sport-input-grid">
+        {exercise?.measurement_type !== 'REPS' && <div><label className="field-label">Gewicht</label><div className="sport-input-wrap"><input className="sport-number-input" inputMode="decimal" value={weight} onChange={e => setWeight(e.target.value.replace(',','.'))} placeholder="82.5" /><span>kg</span></div></div>}
+        <div><label className="field-label">Wiederholungen</label><div className="sport-input-wrap"><input className="sport-number-input" inputMode="numeric" value={reps} onChange={e => setReps(e.target.value)} placeholder="10" /><span>Wdh.</span></div></div>
       </div>}
 
-      <button className="save-set-btn" onClick={saveSet} disabled={busy || !exerciseId}><Plus size={18}/> Satz speichern</button>
+      <button className={`save-set-btn ${savedPulse ? 'saved' : ''}`} onClick={saveSet} disabled={busy || !exerciseId}><Plus size={18}/>{savedPulse ? 'Gespeichert' : 'Satz speichern'}</button>
 
-      <div className="saved-sets">
-        {sets.filter(s => s.exerciseId === exerciseId).length === 0 ? <p className="muted">Für diese Übung noch kein Satz gespeichert.</p> : sets.filter(s => s.exerciseId === exerciseId).slice().reverse().map(s => <div className="saved-set" key={s.id}>
-          <div><strong>{s.exerciseName}</strong><small>Satz {s.setNumber}</small></div>
+      <div className="saved-sets sport-saved-sets">
+        {exerciseSets.length === 0 ? <p className="muted">Noch kein Satz gespeichert.</p> : exerciseSets.slice().reverse().map(s => <div className="saved-set" key={s.id}>
+          <div><strong>Satz {s.setNumber}</strong><small>{s.exerciseName}</small></div>
           <span>{s.duration ? `${s.duration}s` : s.weight != null ? `${s.weight} kg × ${s.reps}` : `${s.reps} Wdh.`}</span>
         </div>)}
       </div>
 
       {activeTemplate && <div className={styles.exerciseNav}>
         <button onClick={() => goTemplate(templateIndex - 1)} disabled={templateIndex === 0}><ChevronLeft size={17}/> Zurück</button>
-        <button onClick={() => goTemplate(templateIndex + 1)} disabled={templateIndex === activeTemplate.exercises.length - 1}>Nächste Übung <ChevronRight size={17}/></button>
+        <button className={styles.nextExercise} onClick={() => goTemplate(templateIndex + 1)} disabled={templateIndex === activeTemplate.exercises.length - 1}>Nächste Übung <ChevronRight size={17}/></button>
       </div>}
 
-      {message && <p className="notice">{message}</p>}
+      {prFlash && <div className="pr-celebration"><Trophy size={18}/><strong>Neuer PR</strong><span>Stark.</span></div>}
+      {message && !prFlash && <p className="notice">{message}</p>}
       <button className="finish-btn" onClick={finish} disabled={busy || sets.length === 0}><Check size={18}/> Training abschließen</button>
     </section>
   </div>
