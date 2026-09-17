@@ -2,13 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { Camera, Copy, Dumbbell, Flame, LogOut, Plus, Scale, Users } from 'lucide-react'
+import { ArrowDown, ArrowUp, Camera, Copy, Dumbbell, Flame, LogOut, Pencil, Plus, Scale, Trash2, Users, X } from 'lucide-react'
 import styles from './features.module.css'
 
 type Group = { id: string; name: string; invite_code: string; role: 'ADMIN' | 'MEMBER' }
 type Member = { user_id: string; role: 'ADMIN' | 'MEMBER'; display_name: string; avatar_path: string | null; avatar_url: string | null }
 type Exercise = { id: string; name: string; category: string; measurement_type: string }
-type GroupTemplate = { id: string; name: string; exercises: string[] }
+type GroupTemplate = { id: string; name: string; exercises: Exercise[] }
 
 export default function GroupPanel({ userId, group, onLogout }: { userId: string; group: Group; onLogout: () => void }) {
   const supabase = useMemo(() => createClient(), [])
@@ -22,6 +22,7 @@ export default function GroupPanel({ userId, group, onLogout }: { userId: string
   const [copied, setCopied] = useState(false)
   const [showChallenge, setShowChallenge] = useState(false)
   const [showTemplateBuilder, setShowTemplateBuilder] = useState(false)
+  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null)
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [target, setTarget] = useState('1')
@@ -67,16 +68,19 @@ export default function GroupPanel({ userId, group, onLogout }: { userId: string
   const loadTemplates = useCallback(async () => {
     const [{ data: exerciseRows }, { data: templateRows }] = await Promise.all([
       supabase.from('exercises').select('id,name,category,measurement_type').eq('is_active', true).order('category').order('name'),
-      supabase.from('workout_templates').select('id,name,workout_template_exercises(position,exercises(name))').eq('group_id', group.id).eq('visibility', 'GROUP').order('name'),
+      supabase.from('workout_templates')
+        .select('id,name,workout_template_exercises(position,exercises(id,name,category,measurement_type))')
+        .eq('group_id', group.id).eq('visibility', 'GROUP').eq('is_active', true).order('name'),
     ])
     setExercises((exerciseRows || []) as Exercise[])
     setTemplates((templateRows || []).map((row: any) => ({
       id: row.id,
       name: row.name,
-      exercises: (row.workout_template_exercises || []).slice().sort((a: any,b: any) => a.position-b.position).map((item: any) => {
-        const ex = Array.isArray(item.exercises) ? item.exercises[0] : item.exercises
-        return ex?.name || 'Übung'
-      }),
+      exercises: (row.workout_template_exercises || [])
+        .slice()
+        .sort((a: any,b: any) => a.position-b.position)
+        .map((item: any) => Array.isArray(item.exercises) ? item.exercises[0] : item.exercises)
+        .filter(Boolean) as Exercise[],
     })))
   }, [group.id, supabase])
 
@@ -128,31 +132,80 @@ export default function GroupPanel({ userId, group, onLogout }: { userId: string
     setBusy(false)
   }
 
+  function resetTemplateBuilder() {
+    setEditingTemplateId(null)
+    setTemplateName('')
+    setSelectedExercises([])
+    setShowTemplateBuilder(false)
+  }
+
+  function startNewTemplate() {
+    setEditingTemplateId(null)
+    setTemplateName('')
+    setSelectedExercises([])
+    setMessage('')
+    setShowTemplateBuilder(true)
+  }
+
+  function startEditTemplate(template: GroupTemplate) {
+    setEditingTemplateId(template.id)
+    setTemplateName(template.name)
+    setSelectedExercises(template.exercises.map(ex => ex.id))
+    setMessage('')
+    setShowTemplateBuilder(true)
+  }
+
   function toggleExercise(id: string) {
     setSelectedExercises(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
   }
 
-  async function createTemplate() {
+  function moveExercise(index: number, direction: -1 | 1) {
+    setSelectedExercises(prev => {
+      const targetIndex = index + direction
+      if (targetIndex < 0 || targetIndex >= prev.length) return prev
+      const next = [...prev]
+      const [item] = next.splice(index, 1)
+      next.splice(targetIndex, 0, item)
+      return next
+    })
+  }
+
+  async function saveTemplate() {
     if (!templateName.trim() || selectedExercises.length === 0) return
     setBusy(true); setMessage('')
-    const { data: template, error } = await supabase.from('workout_templates').insert({
-      user_id: userId, group_id: group.id, name: templateName.trim(), workout_type: 'REGULAR', visibility: 'GROUP',
-    }).select('id').single()
-    if (error || !template) { setMessage(error?.message || 'Trainingstag konnte nicht angelegt werden.'); setBusy(false); return }
-    const { error: exerciseError } = await supabase.from('workout_template_exercises').insert(
-      selectedExercises.map((exercise_id, position) => ({ template_id: template.id, exercise_id, position }))
-    )
-    if (exerciseError) {
-      await supabase.from('workout_templates').delete().eq('id', template.id)
-      setMessage(exerciseError.message); setBusy(false); return
+    const { error } = await supabase.rpc('save_group_workout_template', {
+      p_group_id: group.id,
+      p_template_id: editingTemplateId,
+      p_name: templateName.trim(),
+      p_exercise_ids: selectedExercises,
+    })
+    if (error) {
+      setMessage(error.message)
+      setBusy(false)
+      return
     }
-    setTemplateName(''); setSelectedExercises([]); setShowTemplateBuilder(false)
-    setMessage('Trainingstag gespeichert. Er kann ab jetzt von allen auf der Heute-Seite gestartet werden.')
-    await loadTemplates(); setBusy(false)
+    const wasEditing = Boolean(editingTemplateId)
+    resetTemplateBuilder()
+    setMessage(wasEditing ? 'Trainingstag aktualisiert. Die neue Reihenfolge gilt ab dem nächsten Training.' : 'Trainingstag gespeichert. Er kann ab jetzt von allen auf der Heute-Seite gestartet werden.')
+    await loadTemplates()
+    setBusy(false)
+  }
+
+  async function archiveTemplate(template: GroupTemplate) {
+    if (!window.confirm(`„${template.name}“ wirklich löschen? Bereits absolvierte Trainings bleiben in der Historie erhalten.`)) return
+    setBusy(true); setMessage('')
+    const { error } = await supabase.from('workout_templates').update({ is_active: false }).eq('id', template.id).eq('group_id', group.id)
+    if (error) setMessage(error.message)
+    else {
+      if (editingTemplateId === template.id) resetTemplateBuilder()
+      setMessage('Trainingstag gelöscht. Bereits absolvierte Trainings bleiben erhalten.')
+      await loadTemplates()
+    }
+    setBusy(false)
   }
 
   const categories = [...new Set(exercises.map(e => e.category))]
-  const selectedNames = selectedExercises.map(id => exercises.find(e => e.id === id)?.name).filter(Boolean)
+  const selectedItems = selectedExercises.map(id => exercises.find(e => e.id === id)).filter(Boolean) as Exercise[]
 
   return <section className="screen-pad">
     <div className="eyebrow">Deine Gruppe</div>
@@ -184,18 +237,45 @@ export default function GroupPanel({ userId, group, onLogout }: { userId: string
 
     <div className={styles.sectionCard}>
       <div className={styles.sectionHead}><h3><Dumbbell size={17}/> Trainingstage</h3><span>{templates.length}</span></div>
-      {templates.length === 0 ? <p className="muted">Noch keine festen Trainingstage angelegt.</p> : templates.map(template => <div className={styles.templateSummary} key={template.id}><strong>{template.name}</strong><small>{template.exercises.join(' · ')}</small></div>)}
+      {templates.length === 0 ? <p className="muted">Noch keine festen Trainingstage angelegt.</p> : <div className={styles.templateManageList}>
+        {templates.map(template => <div className={styles.templateManageCard} key={template.id}>
+          <div className={styles.templateManageCopy}><strong>{template.name}</strong><small>{template.exercises.map(ex => ex.name).join(' · ')}</small></div>
+          {group.role === 'ADMIN' && <div className={styles.templateActions}>
+            <button type="button" onClick={() => startEditTemplate(template)} disabled={busy} aria-label={`${template.name} bearbeiten`}><Pencil size={15}/> Bearbeiten</button>
+            <button type="button" className={styles.dangerAction} onClick={() => void archiveTemplate(template)} disabled={busy} aria-label={`${template.name} löschen`}><Trash2 size={15}/> Löschen</button>
+          </div>}
+        </div>)}
+      </div>}
+
       {group.role === 'ADMIN' && <>
-        <button className={styles.adminToggle} onClick={() => setShowTemplateBuilder(v => !v)}><Plus size={17}/>{showTemplateBuilder ? 'Eingabe schließen' : 'Trainingstag anlegen'}</button>
+        {!showTemplateBuilder && <button className={styles.adminToggle} onClick={startNewTemplate}><Plus size={17}/> Trainingstag anlegen</button>}
         {showTemplateBuilder && <div className={styles.builder}>
+          <div className={styles.builderTitle}><div><div className="eyebrow">{editingTemplateId ? 'Trainingstag bearbeiten' : 'Neuer Trainingstag'}</div><strong>{editingTemplateId ? 'Übungen anpassen' : 'Training zusammenstellen'}</strong></div><button type="button" onClick={resetTemplateBuilder} aria-label="Schließen"><X size={18}/></button></div>
           <input value={templateName} onChange={e => setTemplateName(e.target.value)} placeholder="z. B. Rücken & Schultern" />
-          {selectedNames.length > 0 && <p className="muted"><strong>Reihenfolge:</strong> {selectedNames.map((name, i) => `${i+1}. ${name}`).join(' · ')}</p>}
+
+          {selectedItems.length > 0 && <div className={styles.selectedExerciseList}>
+            <div className={styles.selectedListHead}><strong>Reihenfolge</strong><span>{selectedItems.length} Übungen</span></div>
+            {selectedItems.map((exercise, index) => <div className={styles.selectedExerciseRow} key={exercise.id}>
+              <div className={styles.orderNumber}>{index + 1}</div>
+              <div className={styles.selectedExerciseCopy}><strong>{exercise.name}</strong><small>{exercise.category}</small></div>
+              <div className={styles.orderActions}>
+                <button type="button" onClick={() => moveExercise(index, -1)} disabled={index === 0} aria-label="Nach oben"><ArrowUp size={15}/></button>
+                <button type="button" onClick={() => moveExercise(index, 1)} disabled={index === selectedItems.length - 1} aria-label="Nach unten"><ArrowDown size={15}/></button>
+                <button type="button" className={styles.removeExercise} onClick={() => toggleExercise(exercise.id)} aria-label="Übung entfernen"><X size={15}/></button>
+              </div>
+            </div>)}
+          </div>}
+
+          <div className={styles.pickerIntro}><strong>Übungen hinzufügen</strong><span>Antippen fügt hinzu oder entfernt</span></div>
           <div className={styles.exercisePicker}>
             {categories.map(category => <div className={styles.pickerGroup} key={category}><strong>{category}</strong><div className={styles.pickerOptions}>
               {exercises.filter(e => e.category === category).map(ex => <button type="button" key={ex.id} className={`${styles.pickerButton} ${selectedExercises.includes(ex.id) ? styles.selected : ''}`} onClick={() => toggleExercise(ex.id)}>{selectedExercises.includes(ex.id) ? `${selectedExercises.indexOf(ex.id)+1}. ` : ''}{ex.name}</button>)}
             </div></div>)}
           </div>
-          <div className={styles.builderFooter}><button className="primary-btn" onClick={createTemplate} disabled={busy || !templateName.trim() || selectedExercises.length === 0}><Plus size={17}/> Für die Gruppe speichern</button></div>
+          <div className={styles.builderFooter}>
+            <button className="primary-btn" onClick={saveTemplate} disabled={busy || !templateName.trim() || selectedExercises.length === 0}>{editingTemplateId ? <Pencil size={17}/> : <Plus size={17}/>} {busy ? 'Speichert …' : editingTemplateId ? 'Änderungen speichern' : 'Für die Gruppe speichern'}</button>
+            <button type="button" className={styles.cancelBuilder} onClick={resetTemplateBuilder} disabled={busy}>Abbrechen</button>
+          </div>
         </div>}
       </>}
     </div>
