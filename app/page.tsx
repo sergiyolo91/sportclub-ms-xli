@@ -6,7 +6,7 @@ import { Dumbbell, Trophy, Users, LogOut, Plus, Flame, Scale } from 'lucide-reac
 import DashboardLive from './dashboard-live'
 import GroupPanel from './group-panel'
 
-type GroupState = { id: string; name: string; invite_code: string; role: 'ADMIN' | 'MEMBER' } | null
+type GroupState = { id: string; name: string; invite_code: string; created_by: string; role: 'ADMIN' | 'MEMBER' } | null
 type Exercise = { id: string; name: string; category: string; measurement_type: string }
 type AuthMode = 'login' | 'signup'
 type Tab = 'heute' | 'fortschritt' | 'rangliste' | 'gruppe'
@@ -94,7 +94,7 @@ export default function HomePage() {
     setLoading(true)
     const [{ data: profile }, { data: membership }, { data: exerciseRows }] = await Promise.all([
       supabase.from('profiles').select('display_name,avatar_url').eq('id', user.id).maybeSingle(),
-      supabase.from('group_members').select('group_id, role, groups(id,name,invite_code)').eq('user_id', user.id).limit(1).maybeSingle(),
+      supabase.from('group_members').select('group_id, role, groups(id,name,invite_code,created_by)').eq('user_id', user.id).limit(1).maybeSingle(),
       supabase.from('exercises').select('id,name,category,measurement_type').eq('is_active', true).order('category').order('name'),
     ])
     setProfileName(profile?.display_name || user.user_metadata?.display_name || 'Sportler')
@@ -102,7 +102,7 @@ export default function HomePage() {
     setExercises((exerciseRows as Exercise[]) || [])
     const rawGroup: any = membership?.groups
     const g = Array.isArray(rawGroup) ? rawGroup[0] : rawGroup
-    setGroup(membership && g ? { id: g.id, name: g.name, invite_code: g.invite_code, role: membership.role } : null)
+    setGroup(membership && g ? { id: g.id, name: g.name, invite_code: g.invite_code, created_by: g.created_by, role: membership.role } : null)
     setLoading(false)
   }
 
