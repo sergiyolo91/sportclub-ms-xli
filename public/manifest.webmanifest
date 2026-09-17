@@ -1,0 +1,10 @@
+{
+  "name": "Sportclub MS XLI",
+  "short_name": "MS XLI",
+  "description": "Trainieren. Eintragen. Fortschritt sehen. Gemeinsam stärker.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5f1ea",
+  "theme_color": "#f5f1ea",
+  "icons": []
+}
