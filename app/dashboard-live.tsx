@@ -29,6 +29,10 @@ type Challenge = {
   ownCompleted: boolean
 }
 
+function pulseHaptic(ms = 10) {
+  if (typeof navigator !== 'undefined') (navigator as any).vibrate?.(ms)
+}
+
 export default function DashboardLive({ userId, group, exercises }: { userId: string; group: Group; exercises: Exercise[] }) {
   const supabase = useMemo(() => createClient(), [])
   const [stats, setStats] = useState({ workouts: 0, prs: 0, bonus: 0 })
@@ -50,7 +54,7 @@ export default function DashboardLive({ userId, group, exercises }: { userId: st
       supabase.from('workouts').select('id', { count: 'exact', head: true }).eq('user_id', userId).not('finished_at', 'is', null).gte('finished_at', weekStart),
       supabase.from('activities').select('id', { count: 'exact', head: true }).eq('group_id', group.id).eq('user_id', userId).eq('activity_type', 'PERSONAL_RECORD').gte('created_at', weekStart),
       supabase.from('activities').select('id', { count: 'exact', head: true }).eq('group_id', group.id).eq('user_id', userId).in('activity_type', ['BONUS_COMPLETED', 'CHALLENGE_COMPLETED']).gte('created_at', weekStart),
-      supabase.from('activities').select('id,user_id,activity_type,workout_id,challenge_id,exercise_id,created_at').eq('group_id', group.id).order('created_at', { ascending: false }).limit(8),
+      supabase.from('activities').select('id,user_id,activity_type,workout_id,challenge_id,exercise_id,created_at').eq('group_id', group.id).order('created_at', { ascending: false }).limit(10),
       supabase.from('challenges').select('id,title,description,target_count,starts_at,ends_at').eq('group_id', group.id).lte('starts_at', now).or(`ends_at.is.null,ends_at.gte.${now}`).order('starts_at', { ascending: false }).limit(1),
       supabase.from('group_members').select('user_id', { count: 'exact' }).eq('group_id', group.id),
     ])
@@ -123,7 +127,10 @@ export default function DashboardLive({ userId, group, exercises }: { userId: st
     if (!challenge || challenge.ownCompleted) return
     setChallengeBusy(true)
     const { error } = await supabase.rpc('complete_challenge', { p_challenge_id: challenge.id })
-    if (!error) await load()
+    if (!error) {
+      pulseHaptic(18)
+      await load()
+    }
     setChallengeBusy(false)
   }
 
@@ -136,36 +143,41 @@ export default function DashboardLive({ userId, group, exercises }: { userId: st
     return new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: '2-digit' }).format(new Date(iso))
   }
 
+  const activePeople = [...new Map(feed.map(item => [item.userId, item])).values()].slice(0, 5)
+
   return <>
-    <section className="hero-card">
-      <div className="eyebrow">Heute trainieren</div>
-      <h2>Bereit für die nächste Runde?</h2>
-      <p>Starte direkt ein freies Training oder erfasse ein Home-Workout. Deine Sätze landen sofort in deinem Fortschritt.</p>
+    <section className="hero-card training-hero">
+      <div className="hero-topline"><div className="eyebrow">Heute trainieren</div><span className="hero-badge">{stats.workouts} diese Woche</span></div>
+      <h2>Was steht heute an?</h2>
+      <p>Trainingstag wählen, loslegen und Satz für Satz durchgehen.</p>
       <TrainingPanel userId={userId} groupId={group.id} exercises={exercises} />
     </section>
 
-    <section className="section-block">
-      <div className="section-heading"><h2>Deine Woche</h2><button className="tiny-refresh" onClick={() => void load()} aria-label="Aktualisieren"><RefreshCw size={14}/>{loading ? 'Lädt …' : 'Aktuell'}</button></div>
+    <section className="section-block week-block">
+      <div className="section-heading"><div><span className="section-kicker">Dein Rhythmus</span><h2>Diese Woche</h2></div><button className="tiny-refresh" onClick={() => void load()} aria-label="Aktualisieren"><RefreshCw size={14}/>{loading ? 'Lädt …' : 'Aktuell'}</button></div>
       <div className="metric-grid">
-        <div className="metric-card yellow"><strong>{stats.workouts}</strong><span>Trainings</span></div>
-        <div className="metric-card lilac"><strong>{stats.prs}</strong><span>PRs</span></div>
-        <div className="metric-card rose"><strong>{stats.bonus}</strong><span>Bonus</span></div>
+        <div className="metric-card metric-neutral"><strong>{stats.workouts}</strong><span>Trainings</span></div>
+        <div className="metric-card metric-neutral"><strong>{stats.prs}</strong><span>Neue PRs</span></div>
+        <div className="metric-card metric-accent"><strong>{stats.bonus}</strong><span>Bonus</span></div>
       </div>
+      {activePeople.length > 0 && <div className="active-strip">
+        <div className="active-avatars">{activePeople.map(person => person.avatarUrl ? <img key={person.userId} src={person.avatarUrl} alt=""/> : <span key={person.userId}>{person.name.slice(0,1).toUpperCase()}</span>)}</div>
+        <div><strong>Zuletzt aktiv</strong><small>{activePeople.map(person => person.name).join(' · ')}</small></div>
+      </div>}
     </section>
 
     {challenge ? <section className="challenge-card">
-      <div className="eyebrow">Wochenchallenge</div>
-      <h2>{challenge.title}</h2>
+      <div className="challenge-top"><div><div className="eyebrow">Wochenchallenge</div><h2>{challenge.title}</h2></div><Flame size={24}/></div>
       {challenge.description && <p>{challenge.description}</p>}
       <div className="challenge-status"><span>{challenge.completed} von {challenge.members || '–'} erledigt</span><strong>{challenge.members ? Math.round((challenge.completed / challenge.members) * 100) : 0}%</strong></div>
       <div className="progress-line"><span style={{width: `${challenge.members ? Math.min(100, (challenge.completed / challenge.members) * 100) : 0}%`}}/></div>
       <button className={challenge.ownCompleted ? 'challenge-done' : 'challenge-action'} onClick={completeChallenge} disabled={challengeBusy || challenge.ownCompleted}>{challenge.ownCompleted ? <><Check size={17}/> Erledigt</> : <><Flame size={17}/> Challenge geschafft</>}</button>
-    </section> : <section className="challenge-card">
-      <div className="eyebrow">Wochenbonus</div><h2>Noch keine Challenge aktiv</h2><p>{group.role === 'ADMIN' ? 'Als Admin kannst du im nächsten Schritt eine Challenge für eure Gruppe anlegen.' : 'Sobald ein Admin eine Challenge startet, erscheint sie hier.'}</p>
+    </section> : <section className="challenge-card challenge-quiet">
+      <div className="eyebrow">Wochenchallenge</div><h2>Noch keine Challenge aktiv</h2><p>{group.role === 'ADMIN' ? 'Unter Gruppe kannst du eine kleine Challenge für alle starten.' : 'Sobald ein Admin eine Challenge startet, erscheint sie hier.'}</p>
     </section>}
 
     <section className="list-card activity-card">
-      <div className="section-heading"><h2>{group.name} Aktivität</h2><span>{feed.length ? 'Live' : 'Noch ruhig'}</span></div>
+      <div className="section-heading"><div><span className="section-kicker">Gemeinsam dranbleiben</span><h2>{group.name} Aktivität</h2></div><span>{feed.length ? 'Live' : 'Noch ruhig'}</span></div>
       {feed.length === 0 ? <div className="empty-feed"><Dumbbell size={24}/><p>Nach euren ersten Trainings erscheinen hier PRs, Home-Workouts und Challenges.</p></div> : feed.map(item => <div className="activity-row" key={item.id}>
         {item.avatarUrl ? <img src={item.avatarUrl} alt="" className="activity-avatar"/> : <div className={`activity-icon ${item.type === 'PERSONAL_RECORD' ? 'pr' : item.type === 'HOME_WORKOUT_COMPLETED' ? 'home' : item.type === 'CHALLENGE_COMPLETED' ? 'challenge' : ''}`}>
           {item.type === 'PERSONAL_RECORD' ? <Trophy size={17}/> : item.type === 'HOME_WORKOUT_COMPLETED' ? <Home size={17}/> : item.type === 'CHALLENGE_COMPLETED' ? <Flame size={17}/> : <Dumbbell size={17}/>}
@@ -173,11 +185,6 @@ export default function DashboardLive({ userId, group, exercises }: { userId: st
         <div className="activity-copy"><strong>{item.title}</strong><small>{item.detail} · {when(item.createdAt)}</small></div>
         <ChevronRight size={16}/>
       </div>)}
-    </section>
-
-    <section className="list-card">
-      <div className="section-heading"><h2>Übungsbibliothek</h2><span>{exercises.length} Übungen</span></div>
-      {exercises.slice(0,5).map(ex => <div className="row" key={ex.id}><div><strong>{ex.name}</strong><small>{ex.category}</small></div><ChevronRight size={18}/></div>)}
     </section>
   </>
 }
