@@ -1,8 +1,8 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { Check, Dumbbell, Home, Plus, X } from 'lucide-react'
+import { Check, Dumbbell, Home, Plus, X, Trophy } from 'lucide-react'
 
 type Exercise = { id: string; name: string; category: string; measurement_type: 'WEIGHT_REPS' | 'REPS' | 'TIME' | string }
 
@@ -14,6 +14,14 @@ type SavedSet = {
   weight?: number | null
   reps?: number | null
   duration?: number | null
+}
+
+type ReferenceSet = {
+  weight_kg: number | null
+  repetitions: number | null
+  duration_seconds: number | null
+  estimated_1rm: number | null
+  completed_at: string
 }
 
 export default function TrainingPanel({ userId, groupId, exercises }: { userId: string; groupId: string; exercises: Exercise[] }) {
@@ -29,8 +37,53 @@ export default function TrainingPanel({ userId, groupId, exercises }: { userId: 
   const [weIds, setWeIds] = useState<Record<string,string>>({})
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
+  const [lastSet, setLastSet] = useState<ReferenceSet | null>(null)
+  const [best1rm, setBest1rm] = useState<number | null>(null)
 
   const exercise = exercises.find(e => e.id === exerciseId)
+
+  useEffect(() => {
+    if (!exerciseId) return
+    void loadReferenceValues()
+  }, [exerciseId, userId])
+
+  async function loadReferenceValues() {
+    const [{ data: latest }, { data: best }] = await Promise.all([
+      supabase.from('workout_set_details')
+        .select('weight_kg,repetitions,duration_seconds,estimated_1rm,completed_at')
+        .eq('user_id', userId)
+        .eq('exercise_id', exerciseId)
+        .order('completed_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      supabase.from('workout_set_details')
+        .select('estimated_1rm')
+        .eq('user_id', userId)
+        .eq('exercise_id', exerciseId)
+        .not('estimated_1rm', 'is', null)
+        .order('estimated_1rm', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ])
+
+    const ref = latest ? {
+      weight_kg: latest.weight_kg == null ? null : Number(latest.weight_kg),
+      repetitions: latest.repetitions,
+      duration_seconds: latest.duration_seconds,
+      estimated_1rm: latest.estimated_1rm == null ? null : Number(latest.estimated_1rm),
+      completed_at: latest.completed_at,
+    } : null
+
+    setLastSet(ref)
+    setBest1rm(best?.estimated_1rm == null ? null : Number(best.estimated_1rm))
+
+    const alreadyHasSetForExercise = sets.some(s => s.exerciseId === exerciseId)
+    if (ref && !alreadyHasSetForExercise) {
+      if (ref.weight_kg != null) setWeight(String(ref.weight_kg))
+      if (ref.repetitions != null) setReps(String(ref.repetitions))
+      if (ref.duration_seconds != null) setDuration(String(ref.duration_seconds))
+    }
+  }
 
   async function begin(type: 'REGULAR' | 'HOME') {
     setBusy(true)
@@ -81,8 +134,9 @@ export default function TrainingPanel({ userId, groupId, exercises }: { userId: 
         payload.weight_kg = Number(weight || 0)
         payload.repetitions = Number(reps || 0)
       }
-      const { data, error } = await supabase.from('workout_sets').insert(payload).select('id').single()
+      const { data, error } = await supabase.from('workout_sets').insert(payload).select('id,estimated_1rm').single()
       if (error) throw error
+
       setSets(prev => [...prev, {
         id: data.id,
         exerciseId,
@@ -92,7 +146,14 @@ export default function TrainingPanel({ userId, groupId, exercises }: { userId: 
         reps: payload.repetitions ?? null,
         duration: payload.duration_seconds ?? null,
       }])
-      if (exercise.measurement_type === 'TIME') setDuration('')
+
+      if (data.estimated_1rm != null) {
+        const current = Number(data.estimated_1rm)
+        if (best1rm == null || current > best1rm) {
+          setBest1rm(current)
+          setMessage(`Neuer persönlicher Bestwert: ${current.toFixed(1)} kg geschätztes 1RM.`)
+        }
+      }
     } catch (err: any) {
       setMessage(err.message || 'Satz konnte nicht gespeichert werden.')
     } finally {
@@ -120,6 +181,13 @@ export default function TrainingPanel({ userId, groupId, exercises }: { userId: 
     setBusy(false)
   }
 
+  function lastPerformanceText() {
+    if (!lastSet) return 'Noch keine vorherige Leistung'
+    if (exercise?.measurement_type === 'TIME') return `${lastSet.duration_seconds ?? 0} Sek.`
+    if (exercise?.measurement_type === 'REPS') return `${lastSet.repetitions ?? 0} Wdh.`
+    return `${lastSet.weight_kg ?? 0} kg × ${lastSet.repetitions ?? 0}`
+  }
+
   if (!open) {
     return <div className="training-actions">
       <button className="primary-btn" onClick={() => begin('REGULAR')} disabled={busy}><Dumbbell size={18}/> Freies Training</button>
@@ -139,6 +207,17 @@ export default function TrainingPanel({ userId, groupId, exercises }: { userId: 
       <select className="select-input" value={exerciseId} onChange={e => setExerciseId(e.target.value)}>
         {exercises.map(ex => <option key={ex.id} value={ex.id}>{ex.name} · {ex.category}</option>)}
       </select>
+
+      <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, margin:'12px 0 4px'}}>
+        <div style={{background:'rgba(255,255,255,.72)', borderRadius:16, padding:'12px 13px'}}>
+          <div className="eyebrow">Letztes Mal</div>
+          <strong style={{display:'block', marginTop:5}}>{lastPerformanceText()}</strong>
+        </div>
+        <div style={{background:'rgba(232,225,239,.85)', borderRadius:16, padding:'12px 13px'}}>
+          <div className="eyebrow">Persönlicher Rekord</div>
+          <strong style={{display:'flex', alignItems:'center', gap:5, marginTop:5}}><Trophy size={15}/>{best1rm == null ? '–' : `${best1rm.toFixed(1)} kg`}</strong>
+        </div>
+      </div>
 
       {exercise?.measurement_type === 'TIME' ? <>
         <label className="field-label">Dauer in Sekunden</label>
