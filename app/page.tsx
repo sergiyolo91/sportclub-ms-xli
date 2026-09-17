@@ -2,19 +2,32 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { Dumbbell, Trophy, Users, LogOut, Plus, ChevronRight, Flame } from 'lucide-react'
+import { Dumbbell, Trophy, Users, LogOut, Plus, ChevronRight, Flame, Scale } from 'lucide-react'
+import TrainingPanel from './training-panel'
 
-type GroupState = {
-  id: string
-  name: string
-  invite_code: string
-  role: 'ADMIN' | 'MEMBER'
-} | null
-
+type GroupState = { id: string; name: string; invite_code: string; role: 'ADMIN' | 'MEMBER' } | null
 type Exercise = { id: string; name: string; category: string; measurement_type: string }
-
 type AuthMode = 'login' | 'signup'
 type Tab = 'heute' | 'fortschritt' | 'rangliste' | 'gruppe'
+
+type ProgressRow = {
+  exercise_id: string
+  exercise_name: string
+  best_1rm: number
+  best_weight: number | null
+  best_reps: number | null
+  last_at: string
+}
+
+type RankingRow = {
+  user_id: string
+  display_name: string
+  score: number | null
+  best_weight: number | null
+  best_reps: number | null
+  best_1rm: number | null
+  last_at: string | null
+}
 
 export default function HomePage() {
   const supabase = useMemo(() => createClient(), [])
@@ -38,9 +51,7 @@ export default function HomePage() {
       setUser(data.session?.user ?? null)
       setLoading(false)
     })
-    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null)
-    })
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => setUser(session?.user ?? null))
     return () => data.subscription.unsubscribe()
   }, [supabase])
 
@@ -60,17 +71,11 @@ export default function HomePage() {
       supabase.from('group_members').select('group_id, role, groups(id,name,invite_code)').eq('user_id', user.id).limit(1).maybeSingle(),
       supabase.from('exercises').select('id,name,category,measurement_type').eq('is_active', true).order('category').order('name'),
     ])
-
     setProfileName(profile?.display_name || user.user_metadata?.display_name || 'Sportler')
     setExercises((exerciseRows as Exercise[]) || [])
-
     const rawGroup: any = membership?.groups
     const g = Array.isArray(rawGroup) ? rawGroup[0] : rawGroup
-    if (membership && g) {
-      setGroup({ id: g.id, name: g.name, invite_code: g.invite_code, role: membership.role })
-    } else {
-      setGroup(null)
-    }
+    setGroup(membership && g ? { id: g.id, name: g.name, invite_code: g.invite_code, role: membership.role } : null)
     setLoading(false)
   }
 
@@ -126,101 +131,82 @@ export default function HomePage() {
   if (loading) return <main className="center-page"><div className="loader"/><p>Lade Sportclub …</p></main>
 
   if (!user) {
-    return (
-      <main className="auth-page">
-        <div className="brand-mark"><Dumbbell size={30}/></div>
-        <div className="brand-kicker">SPORTCLUB</div>
-        <h1 className="brand-title">MS XLI</h1>
-        <p className="brand-copy">Trainieren. Eintragen. Fortschritt sehen.<br/>Gemeinsam stärker.</p>
-
-        <section className="auth-card">
-          <div className="segmented">
-            <button className={authMode === 'login' ? 'selected' : ''} onClick={() => setAuthMode('login')}>Anmelden</button>
-            <button className={authMode === 'signup' ? 'selected' : ''} onClick={() => setAuthMode('signup')}>Account erstellen</button>
-          </div>
-          <form onSubmit={handleAuth} className="stack">
-            {authMode === 'signup' && <input placeholder="Dein Name" value={displayName} onChange={e => setDisplayName(e.target.value)} required />}
-            <input type="email" placeholder="E-Mail" value={email} onChange={e => setEmail(e.target.value)} required />
-            <input type="password" placeholder="Passwort" value={password} onChange={e => setPassword(e.target.value)} minLength={6} required />
-            <button className="primary-btn" disabled={busy}>{busy ? 'Einen Moment …' : authMode === 'login' ? 'Anmelden' : 'Account erstellen'}</button>
-          </form>
-          {message && <p className="notice">{message}</p>}
-        </section>
-      </main>
-    )
+    return <main className="auth-page">
+      <div className="brand-mark"><Dumbbell size={30}/></div>
+      <div className="brand-kicker">SPORTCLUB</div>
+      <h1 className="brand-title">MS XLI</h1>
+      <p className="brand-copy">Trainieren. Eintragen. Fortschritt sehen.<br/>Gemeinsam stärker.</p>
+      <section className="auth-card">
+        <div className="segmented">
+          <button className={authMode === 'login' ? 'selected' : ''} onClick={() => setAuthMode('login')}>Anmelden</button>
+          <button className={authMode === 'signup' ? 'selected' : ''} onClick={() => setAuthMode('signup')}>Account erstellen</button>
+        </div>
+        <form onSubmit={handleAuth} className="stack">
+          {authMode === 'signup' && <input placeholder="Dein Name" value={displayName} onChange={e => setDisplayName(e.target.value)} required />}
+          <input type="email" placeholder="E-Mail" value={email} onChange={e => setEmail(e.target.value)} required />
+          <input type="password" placeholder="Passwort" value={password} onChange={e => setPassword(e.target.value)} minLength={6} required />
+          <button className="primary-btn" disabled={busy}>{busy ? 'Einen Moment …' : authMode === 'login' ? 'Anmelden' : 'Account erstellen'}</button>
+        </form>
+        {message && <p className="notice">{message}</p>}
+      </section>
+    </main>
   }
 
   if (!group) {
-    return (
-      <main className="onboarding-page">
-        <div className="topbar simple"><div><div className="eyebrow">Willkommen, {profileName}</div><h1>Deine Gruppe</h1></div><button className="icon-btn" onClick={signOut}><LogOut size={20}/></button></div>
-        <p className="lead">Erstelle eure private Fitnessgruppe oder tritt mit einem Einladungscode bei.</p>
-
-        <section className="choice-card sage-card">
-          <div className="choice-icon"><Users size={24}/></div>
-          <h2>Gruppe erstellen</h2>
-          <p>Du wirst automatisch Admin und kannst anschließend deine Freunde einladen.</p>
-          <input value={groupName} onChange={e => setGroupName(e.target.value)} placeholder="Gruppenname" />
-          <button className="primary-btn" onClick={createGroup} disabled={busy}><Plus size={18}/> Gruppe erstellen</button>
-        </section>
-
-        <section className="choice-card rose-card">
-          <div className="choice-icon"><Dumbbell size={24}/></div>
-          <h2>Gruppe beitreten</h2>
-          <p>Gib den Code ein, den dir ein Mitglied deiner Gruppe geschickt hat.</p>
-          <input value={inviteCode} onChange={e => setInviteCode(e.target.value.toUpperCase())} placeholder="z. B. MSXLI-8472" />
-          <button className="secondary-btn" onClick={joinGroup} disabled={busy}>Beitreten</button>
-        </section>
-        {message && <p className="notice">{message}</p>}
-      </main>
-    )
+    return <main className="onboarding-page">
+      <div className="topbar simple"><div><div className="eyebrow">Willkommen, {profileName}</div><h1>Deine Gruppe</h1></div><button className="icon-btn" onClick={signOut}><LogOut size={20}/></button></div>
+      <p className="lead">Erstelle eure private Fitnessgruppe oder tritt mit einem Einladungscode bei.</p>
+      <section className="choice-card sage-card">
+        <div className="choice-icon"><Users size={24}/></div><h2>Gruppe erstellen</h2><p>Du wirst automatisch Admin und kannst anschließend deine Freunde einladen.</p>
+        <input value={groupName} onChange={e => setGroupName(e.target.value)} placeholder="Gruppenname" />
+        <button className="primary-btn" onClick={createGroup} disabled={busy}><Plus size={18}/> Gruppe erstellen</button>
+      </section>
+      <section className="choice-card rose-card">
+        <div className="choice-icon"><Dumbbell size={24}/></div><h2>Gruppe beitreten</h2><p>Gib den Code ein, den dir ein Mitglied deiner Gruppe geschickt hat.</p>
+        <input value={inviteCode} onChange={e => setInviteCode(e.target.value.toUpperCase())} placeholder="Einladungscode" />
+        <button className="secondary-btn" onClick={joinGroup} disabled={busy}>Beitreten</button>
+      </section>
+      {message && <p className="notice">{message}</p>}
+    </main>
   }
 
-  return (
-    <main className="shell">
-      <header className="topbar">
-        <div><div className="eyebrow">{group.name}</div><h1 className="title">Hallo {profileName}.</h1></div>
-        <button className="avatar-btn" onClick={() => setTab('gruppe')}>{profileName.slice(0,1).toUpperCase()}</button>
-      </header>
+  return <main className="shell">
+    <header className="topbar">
+      <div><div className="eyebrow">{group.name}</div><h1 className="title">Hallo {profileName}.</h1></div>
+      <button className="avatar-btn" onClick={() => setTab('gruppe')}>{profileName.slice(0,1).toUpperCase()}</button>
+    </header>
 
-      {tab === 'heute' && <Today group={group} exercises={exercises} />}
-      {tab === 'fortschritt' && <ProgressPlaceholder />}
-      {tab === 'rangliste' && <RankingPlaceholder />}
-      {tab === 'gruppe' && <GroupScreen group={group} profileName={profileName} onLogout={signOut} />}
+    {tab === 'heute' && <Today userId={user.id} group={group} exercises={exercises} />}
+    {tab === 'fortschritt' && <ProgressScreen userId={user.id} exercises={exercises} />}
+    {tab === 'rangliste' && <RankingScreen groupId={group.id} exercises={exercises} />}
+    {tab === 'gruppe' && <GroupScreen group={group} profileName={profileName} onLogout={signOut} />}
 
-      <nav className="bottom-nav">
-        <NavButton active={tab === 'heute'} onClick={() => setTab('heute')} icon={<Dumbbell size={20}/>} label="Heute" />
-        <NavButton active={tab === 'fortschritt'} onClick={() => setTab('fortschritt')} icon={<Flame size={20}/>} label="Fortschritt" />
-        <NavButton active={tab === 'rangliste'} onClick={() => setTab('rangliste')} icon={<Trophy size={20}/>} label="Rangliste" />
-        <NavButton active={tab === 'gruppe'} onClick={() => setTab('gruppe')} icon={<Users size={20}/>} label="Gruppe" />
-      </nav>
-    </main>
-  )
+    <nav className="bottom-nav">
+      <NavButton active={tab === 'heute'} onClick={() => setTab('heute')} icon={<Dumbbell size={20}/>} label="Heute" />
+      <NavButton active={tab === 'fortschritt'} onClick={() => setTab('fortschritt')} icon={<Flame size={20}/>} label="Fortschritt" />
+      <NavButton active={tab === 'rangliste'} onClick={() => setTab('rangliste')} icon={<Trophy size={20}/>} label="Rangliste" />
+      <NavButton active={tab === 'gruppe'} onClick={() => setTab('gruppe')} icon={<Users size={20}/>} label="Gruppe" />
+    </nav>
+  </main>
 }
 
-function Today({ group, exercises }: { group: NonNullable<GroupState>; exercises: Exercise[] }) {
+function Today({ userId, group, exercises }: { userId: string; group: NonNullable<GroupState>; exercises: Exercise[] }) {
   return <>
     <section className="hero-card">
       <div className="eyebrow">Heute trainieren</div>
       <h2>Bereit für die nächste Runde?</h2>
-      <p>Trainingsvorlagen kommen im nächsten Schritt. Die Übungsbibliothek ist bereits mit {exercises.length} Übungen verbunden.</p>
-      <button className="primary-btn"><Dumbbell size={18}/> Training starten</button>
+      <p>Starte direkt ein freies Training oder erfasse ein Home-Workout. Deine Sätze landen sofort in deinem Fortschritt.</p>
+      <TrainingPanel userId={userId} groupId={group.id} exercises={exercises} />
     </section>
-
     <section className="section-block">
-      <div className="section-heading"><h2>Deine Woche</h2><span>Aktuell</span></div>
+      <div className="section-heading"><h2>Deine Woche</h2><span>Live aus Supabase</span></div>
       <div className="metric-grid">
-        <div className="metric-card yellow"><strong>0</strong><span>Trainings</span></div>
-        <div className="metric-card lilac"><strong>0</strong><span>PRs</span></div>
-        <div className="metric-card rose"><strong>0</strong><span>Bonus</span></div>
+        <div className="metric-card yellow"><strong>–</strong><span>Trainings</span></div>
+        <div className="metric-card lilac"><strong>–</strong><span>PRs</span></div>
+        <div className="metric-card rose"><strong>–</strong><span>Bonus</span></div>
       </div>
     </section>
-
-    <section className="challenge-card">
-      <div><div className="eyebrow">Wochenbonus</div><h2>Die erste Challenge wartet</h2><p>Ein Admin kann bald eine Gruppen-Challenge anlegen.</p></div>
-      <div className="progress-line"><span style={{width:'0%'}}/></div>
-    </section>
-
+    <section className="challenge-card"><div className="eyebrow">Wochenbonus</div><h2>Die erste Challenge kommt als Nächstes</h2><p>Gruppen-Challenges und Bonus-Einheiten bauen wir direkt auf der bestehenden Datenbank auf.</p></section>
     <section className="list-card">
       <div className="section-heading"><h2>Übungsbibliothek</h2><span>{exercises.length} Übungen</span></div>
       {exercises.slice(0,5).map(ex => <div className="row" key={ex.id}><div><strong>{ex.name}</strong><small>{ex.category}</small></div><ChevronRight size={18}/></div>)}
@@ -228,12 +214,89 @@ function Today({ group, exercises }: { group: NonNullable<GroupState>; exercises
   </>
 }
 
-function ProgressPlaceholder() {
-  return <section className="screen-pad"><div className="eyebrow">Dein Fortschritt</div><h2 className="screen-title">Noch keine Trainingsdaten.</h2><p className="lead">Sobald du Sätze speicherst, erscheinen hier Verlauf, persönliche Rekorde und dein geschätztes 1RM.</p><div className="empty-chart"><div className="chart-line"/></div></section>
+function ProgressScreen({ userId, exercises }: { userId: string; exercises: Exercise[] }) {
+  const supabase = useMemo(() => createClient(), [])
+  const [rows, setRows] = useState<ProgressRow[]>([])
+  const [weight, setWeight] = useState('')
+  const [status, setStatus] = useState('')
+
+  useEffect(() => { void load() }, [])
+
+  async function load() {
+    const { data } = await supabase.from('workout_set_details')
+      .select('exercise_id,exercise_name,estimated_1rm,weight_kg,repetitions,completed_at')
+      .eq('user_id', userId)
+      .not('estimated_1rm', 'is', null)
+      .order('completed_at', { ascending: false })
+    const byExercise = new Map<string, ProgressRow>()
+    for (const row of (data || []) as any[]) {
+      const current = byExercise.get(row.exercise_id)
+      if (!current || Number(row.estimated_1rm) > current.best_1rm) {
+        byExercise.set(row.exercise_id, {
+          exercise_id: row.exercise_id,
+          exercise_name: row.exercise_name,
+          best_1rm: Number(row.estimated_1rm),
+          best_weight: row.weight_kg == null ? null : Number(row.weight_kg),
+          best_reps: row.repetitions,
+          last_at: row.completed_at,
+        })
+      }
+    }
+    setRows([...byExercise.values()].sort((a,b) => b.best_1rm - a.best_1rm))
+  }
+
+  async function saveWeight() {
+    const value = Number(weight.replace(',','.'))
+    if (!value || value <= 0) return
+    const { error } = await supabase.from('body_weights').insert({ user_id: userId, weight_kg: value })
+    setStatus(error ? error.message : 'Körpergewicht gespeichert. Es bleibt für andere verborgen.')
+    if (!error) setWeight('')
+  }
+
+  return <section className="screen-pad">
+    <div className="eyebrow">Dein Fortschritt</div><h2 className="screen-title">Stärker als gestern.</h2>
+    <div className="weight-card"><Scale size={22}/><div><strong>Körpergewicht</strong><small>Nur für dich sichtbar · für relative Rangliste intern genutzt</small></div></div>
+    <div className="weight-entry"><input inputMode="decimal" value={weight} onChange={e => setWeight(e.target.value)} placeholder="z. B. 82,5 kg"/><button onClick={saveWeight}>Speichern</button></div>
+    {status && <p className="notice">{status}</p>}
+    {rows.length === 0 ? <div className="podium-empty"><Flame size={32}/><strong>Noch keine Kraftdaten.</strong><p>Nach deinem ersten Training erscheinen hier deine besten Leistungen.</p></div> : <div className="progress-list">
+      {rows.map(row => <div className="progress-item" key={row.exercise_id}><div><strong>{row.exercise_name}</strong><small>bestes geschätztes 1RM</small></div><div className="progress-value"><strong>{row.best_1rm.toFixed(1)} kg</strong><span>{row.best_weight ?? '–'} kg × {row.best_reps ?? '–'}</span></div></div>)}
+    </div>}
+  </section>
 }
 
-function RankingPlaceholder() {
-  return <section className="screen-pad"><div className="eyebrow">MS XLI</div><h2 className="screen-title">Rangliste</h2><div className="ranking-tabs"><span className="active">Leistung</span><span>Relativ</span><span>+90 Tage</span></div><div className="podium-empty"><Trophy size={34}/><strong>Die Rangliste füllt sich nach euren ersten Trainings.</strong><p>Verglichen werden später Leistung, Kraft im Verhältnis zum Körpergewicht und Fortschritt.</p></div></section>
+function RankingScreen({ groupId, exercises }: { groupId: string; exercises: Exercise[] }) {
+  const supabase = useMemo(() => createClient(), [])
+  const weighted = exercises.filter(e => e.measurement_type === 'WEIGHT_REPS')
+  const [exerciseId, setExerciseId] = useState(weighted[0]?.id ?? '')
+  const [mode, setMode] = useState<'performance'|'relative'|'progress'>('performance')
+  const [rows, setRows] = useState<RankingRow[]>([])
+
+  useEffect(() => { if (exerciseId) void load() }, [exerciseId, mode])
+
+  async function load() {
+    const { data } = await supabase.rpc('get_group_ranking', { p_group_id: groupId, p_exercise_id: exerciseId, p_mode: mode })
+    setRows((data as RankingRow[]) || [])
+  }
+
+  function scoreText(row: RankingRow) {
+    if (row.score == null) return '–'
+    if (mode === 'relative') return `${Number(row.score).toFixed(2)} × KG`
+    if (mode === 'progress') return `${Number(row.score) >= 0 ? '+' : ''}${Number(row.score).toFixed(1)} %`
+    return `${Number(row.score).toFixed(1)} kg`
+  }
+
+  return <section className="screen-pad">
+    <div className="eyebrow">Gemeinsam stärker.</div><h2 className="screen-title">Rangliste</h2>
+    <select className="select-input" value={exerciseId} onChange={e => setExerciseId(e.target.value)}>{weighted.map(ex => <option key={ex.id} value={ex.id}>{ex.name}</option>)}</select>
+    <div className="ranking-tabs">
+      <button className={mode === 'performance' ? 'active' : ''} onClick={() => setMode('performance')}>Leistung</button>
+      <button className={mode === 'relative' ? 'active' : ''} onClick={() => setMode('relative')}>Relativ</button>
+      <button className={mode === 'progress' ? 'active' : ''} onClick={() => setMode('progress')}>+90 Tage</button>
+    </div>
+    {rows.length === 0 ? <div className="podium-empty"><Trophy size={34}/><strong>Die Rangliste wartet auf eure ersten Trainings.</strong></div> : <div className="ranking-list">
+      {rows.map((row, index) => <div className="ranking-row" key={row.user_id}><div className="rank-number">{index + 1}</div><div className="rank-person"><strong>{row.display_name}</strong><small>{row.best_weight ?? '–'} kg × {row.best_reps ?? '–'} Wdh.</small></div><div className="rank-score">{scoreText(row)}</div></div>)}
+    </div>}
+  </section>
 }
 
 function GroupScreen({ group, profileName, onLogout }: { group: NonNullable<GroupState>; profileName: string; onLogout: () => void }) {
