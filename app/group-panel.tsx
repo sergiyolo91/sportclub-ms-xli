@@ -2,11 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { ArrowDown, ArrowUp, Camera, Copy, Dumbbell, Flame, LogOut, Pencil, Plus, Scale, Trash2, Users, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Camera, Copy, Dumbbell, Flame, LogOut, Pencil, Plus, Scale, ShieldCheck, Trash2, UserRound, Users, X } from 'lucide-react'
 import styles from './features.module.css'
 import ExerciseManager from './exercise-manager'
 
-type Group = { id: string; name: string; invite_code: string; role: 'ADMIN' | 'MEMBER' }
+type Group = { id: string; name: string; invite_code: string; created_by: string; role: 'ADMIN' | 'MEMBER' }
 type Member = { user_id: string; role: 'ADMIN' | 'MEMBER'; display_name: string; avatar_path: string | null; avatar_url: string | null }
 type Exercise = { id: string; name: string; category: string; measurement_type: string }
 type GroupTemplate = { id: string; name: string; exercises: Exercise[] }
@@ -34,6 +34,7 @@ export default function GroupPanel({ userId, group, onLogout, onProfileUpdated, 
   const [selectedExercises, setSelectedExercises] = useState<string[]>([])
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
+  const [roleBusyUserId, setRoleBusyUserId] = useState<string | null>(null)
 
   const signedAvatar = useCallback(async (path: string | null) => {
     if (!path) return null
@@ -206,6 +207,27 @@ export default function GroupPanel({ userId, group, onLogout, onProfileUpdated, 
     setBusy(false)
   }
 
+  async function changeMemberRole(member: Member) {
+    if (group.role !== 'ADMIN' || member.user_id === group.created_by || member.user_id === userId) return
+    const nextRole = member.role === 'ADMIN' ? 'MEMBER' : 'ADMIN'
+    const action = nextRole === 'ADMIN' ? 'zum Admin machen' : 'wieder als Mitglied einstufen'
+    if (!window.confirm(`${member.display_name} wirklich ${action}?`)) return
+
+    setRoleBusyUserId(member.user_id)
+    setMessage('')
+    const { error } = await supabase.rpc('set_group_member_role', {
+      p_group_id: group.id,
+      p_user_id: member.user_id,
+      p_role: nextRole,
+    })
+    if (error) setMessage(error.message)
+    else {
+      setMessage(nextRole === 'ADMIN' ? `${member.display_name} ist jetzt Admin.` : `${member.display_name} ist jetzt Mitglied.`)
+      await loadMembers()
+    }
+    setRoleBusyUserId(null)
+  }
+
   const categories = [...new Set(exercises.map(e => e.category))]
   const selectedItems = selectedExercises.map(id => exercises.find(e => e.id === id)).filter(Boolean) as Exercise[]
 
@@ -306,9 +328,22 @@ export default function GroupPanel({ userId, group, onLogout, onProfileUpdated, 
 
     <div className="list-card">
       <div className="section-heading"><h2>Mitglieder</h2><span>{members.length}</span></div>
-      {members.map(member => <div className="row" key={member.user_id}>
-        <div><strong>{member.display_name}</strong><small>{member.role === 'ADMIN' ? 'Admin' : 'Mitglied'}</small></div>
+      {members.map(member => <div className={`${styles.memberRow} ${member.user_id === userId ? styles.currentMember : ''}`} key={member.user_id}>
         <div className={styles.memberAvatar}>{member.avatar_url ? <img src={member.avatar_url} alt="" className={styles.avatarSmall}/> : <div className={styles.avatarMiniFallback}>{member.display_name.slice(0,1).toUpperCase()}</div>}</div>
+        <div className={styles.memberCopy}>
+          <strong>{member.display_name}{member.user_id === userId ? ' (du)' : ''}</strong>
+          <small>{member.user_id === group.created_by ? 'Hauptadmin · Gruppenersteller' : member.role === 'ADMIN' ? 'Admin' : 'Mitglied'}</small>
+        </div>
+        {group.role === 'ADMIN' && member.user_id !== group.created_by && member.user_id !== userId && <button
+          type="button"
+          className={`${styles.roleButton} ${member.role === 'ADMIN' ? styles.demoteButton : ''}`}
+          onClick={() => void changeMemberRole(member)}
+          disabled={roleBusyUserId === member.user_id}
+          aria-label={member.role === 'ADMIN' ? `${member.display_name} zum Mitglied machen` : `${member.display_name} zum Admin machen`}
+        >
+          {member.role === 'ADMIN' ? <UserRound size={15}/> : <ShieldCheck size={15}/>}
+          {roleBusyUserId === member.user_id ? 'Speichert …' : member.role === 'ADMIN' ? 'Zum Mitglied' : 'Zum Admin'}
+        </button>}
       </div>)}
       {!members.length && <div className="empty-feed"><Users size={24}/><p>Noch keine Mitglieder gefunden.</p></div>}
     </div>
