@@ -31,6 +31,10 @@ type RankingRow = {
   avatarUrl?: string | null
 }
 
+function softHaptic(ms = 8) {
+  if (typeof navigator !== 'undefined') (navigator as any).vibrate?.(ms)
+}
+
 export default function HomePage() {
   const supabase = useMemo(() => createClient(), [])
   const [loading, setLoading] = useState(true)
@@ -146,6 +150,11 @@ export default function HomePage() {
     setTab('heute')
   }
 
+  function selectTab(next: Tab) {
+    if (next !== tab) softHaptic()
+    setTab(next)
+  }
+
   if (loading) return <main className="center-page"><div className="loader"/><p>Lade Sportclub …</p></main>
 
   if (!user) {
@@ -189,21 +198,23 @@ export default function HomePage() {
   }
 
   return <main className="shell">
-    <header className="topbar">
+    <header className="topbar app-topbar">
       <div><div className="eyebrow">{group.name}</div><h1 className="title">Hallo {profileName}.</h1></div>
-      <button className="avatar-btn" onClick={() => setTab('gruppe')} aria-label="Profil öffnen">{profileAvatarUrl ? <img src={profileAvatarUrl} alt="" className="avatar-btn-image"/> : profileName.slice(0,1).toUpperCase()}</button>
+      <button className="avatar-btn" onClick={() => selectTab('gruppe')} aria-label="Profil öffnen">{profileAvatarUrl ? <img src={profileAvatarUrl} alt="" className="avatar-btn-image"/> : profileName.slice(0,1).toUpperCase()}</button>
     </header>
 
-    {tab === 'heute' && <DashboardLive userId={user.id} group={group} exercises={exercises} />}
-    {tab === 'fortschritt' && <ProgressScreen userId={user.id} exercises={exercises} />}
-    {tab === 'rangliste' && <RankingScreen groupId={group.id} exercises={exercises} />}
-    {tab === 'gruppe' && <GroupPanel userId={user.id} group={group} onLogout={signOut} onProfileUpdated={refreshOwnProfile} />}
+    <div className="tab-stage" key={tab}>
+      {tab === 'heute' && <DashboardLive userId={user.id} group={group} exercises={exercises} />}
+      {tab === 'fortschritt' && <ProgressScreen userId={user.id} exercises={exercises} />}
+      {tab === 'rangliste' && <RankingScreen groupId={group.id} exercises={exercises} />}
+      {tab === 'gruppe' && <GroupPanel userId={user.id} group={group} onLogout={signOut} onProfileUpdated={refreshOwnProfile} />}
+    </div>
 
     <nav className="bottom-nav">
-      <NavButton active={tab === 'heute'} onClick={() => setTab('heute')} icon={<Dumbbell size={20}/>} label="Heute" />
-      <NavButton active={tab === 'fortschritt'} onClick={() => setTab('fortschritt')} icon={<Flame size={20}/>} label="Fortschritt" />
-      <NavButton active={tab === 'rangliste'} onClick={() => setTab('rangliste')} icon={<Trophy size={20}/>} label="Rangliste" />
-      <NavButton active={tab === 'gruppe'} onClick={() => setTab('gruppe')} icon={<Users size={20}/>} label="Gruppe" />
+      <NavButton active={tab === 'heute'} onClick={() => selectTab('heute')} icon={<Dumbbell size={20}/>} label="Heute" />
+      <NavButton active={tab === 'fortschritt'} onClick={() => selectTab('fortschritt')} icon={<Flame size={20}/>} label="Fortschritt" />
+      <NavButton active={tab === 'rangliste'} onClick={() => selectTab('rangliste')} icon={<Trophy size={20}/>} label="Rangliste" />
+      <NavButton active={tab === 'gruppe'} onClick={() => selectTab('gruppe')} icon={<Users size={20}/>} label="Gruppe" />
     </nav>
   </main>
 }
@@ -244,7 +255,10 @@ function ProgressScreen({ userId, exercises }: { userId: string; exercises: Exer
     if (!value || value <= 0) return
     const { error } = await supabase.from('body_weights').insert({ user_id: userId, weight_kg: value })
     setStatus(error ? error.message : 'Körpergewicht gespeichert. Es bleibt für andere verborgen.')
-    if (!error) setWeight('')
+    if (!error) {
+      setWeight('')
+      softHaptic(12)
+    }
   }
 
   return <section className="screen-pad">
@@ -253,7 +267,7 @@ function ProgressScreen({ userId, exercises }: { userId: string; exercises: Exer
     <div className="weight-entry"><input inputMode="decimal" value={weight} onChange={e => setWeight(e.target.value)} placeholder="z. B. 82,5 kg"/><button onClick={saveWeight}>Speichern</button></div>
     {status && <p className="notice">{status}</p>}
     {rows.length === 0 ? <div className="podium-empty"><Flame size={32}/><strong>Noch keine Kraftdaten.</strong><p>Nach deinem ersten Training erscheinen hier deine besten Leistungen.</p></div> : <div className="progress-list">
-      {rows.map(row => <div className="progress-item" key={row.exercise_id}><div><strong>{row.exercise_name}</strong><small>bestes geschätztes 1RM</small></div><div className="progress-value"><strong>{row.best_1rm.toFixed(1)} kg</strong><span>{row.best_weight ?? '–'} kg × {row.best_reps ?? '–'}</span></div></div>)}
+      {rows.map(row => <div className="progress-item" key={row.exercise_id}><div><strong>{row.exercise_name}</strong><small>bestes geschätztes 1RM</small></div><div className="progress-value"><strong>{row.best_1rm.toFixed(1)}<em> kg</em></strong><span>{row.best_weight ?? '–'} kg × {row.best_reps ?? '–'}</span></div></div>)}
     </div>}
   </section>
 }
@@ -293,17 +307,45 @@ function RankingScreen({ groupId, exercises }: { groupId: string; exercises: Exe
     return `${Number(row.score).toFixed(1)} kg`
   }
 
+  function rankingAvatar(row: RankingRow, large = false) {
+    return <div className={`rank-avatar ${large ? 'rank-avatar-large' : ''}`}>{row.avatarUrl ? <img src={row.avatarUrl} alt=""/> : <span>{row.display_name.slice(0,1).toUpperCase()}</span>}</div>
+  }
+
+  const leaders = rows.slice(0, 3)
+  const rest = rows.slice(3)
+
   return <section className="screen-pad">
     <div className="eyebrow">Gemeinsam stärker.</div><h2 className="screen-title">Rangliste</h2>
-    <select className="select-input" value={exerciseId} onChange={e => setExerciseId(e.target.value)}>{weighted.map(ex => <option key={ex.id} value={ex.id}>{ex.name}</option>)}</select>
-    <div className="ranking-tabs">
-      <button className={mode === 'performance' ? 'active' : ''} onClick={() => setMode('performance')}>Leistung</button>
-      <button className={mode === 'relative' ? 'active' : ''} onClick={() => setMode('relative')}>Relativ</button>
-      <button className={mode === 'progress' ? 'active' : ''} onClick={() => setMode('progress')}>+90 Tage</button>
+    <div className="ranking-control-card">
+      <select className="select-input" value={exerciseId} onChange={e => setExerciseId(e.target.value)}>{weighted.map(ex => <option key={ex.id} value={ex.id}>{ex.name}</option>)}</select>
+      <div className="ranking-tabs">
+        <button className={mode === 'performance' ? 'active' : ''} onClick={() => { setMode('performance'); softHaptic() }}>Leistung</button>
+        <button className={mode === 'relative' ? 'active' : ''} onClick={() => { setMode('relative'); softHaptic() }}>Relativ</button>
+        <button className={mode === 'progress' ? 'active' : ''} onClick={() => { setMode('progress'); softHaptic() }}>+90 Tage</button>
+      </div>
     </div>
-    {rows.length === 0 ? <div className="podium-empty"><Trophy size={34}/><strong>Die Rangliste wartet auf eure ersten Trainings.</strong></div> : <div className="ranking-list">
-      {rows.map((row, index) => <div className="ranking-row" key={row.user_id}><div className="rank-number">{index + 1}</div><div className="rank-avatar">{row.avatarUrl ? <img src={row.avatarUrl} alt=""/> : <span>{row.display_name.slice(0,1).toUpperCase()}</span>}</div><div className="rank-person"><strong>{row.display_name}</strong><small>{row.best_weight ?? '–'} kg × {row.best_reps ?? '–'} Wdh.</small></div><div className="rank-score">{scoreText(row)}</div></div>)}
-    </div>}
+
+    {rows.length === 0 ? <div className="podium-empty"><Trophy size={34}/><strong>Die Rangliste wartet auf eure ersten Trainings.</strong></div> : <>
+      <div className="podium-board">
+        {leaders[0] && <div className="leader-card leader-first">
+          <div className="leader-place"><Trophy size={16}/> Platz 1</div>
+          {rankingAvatar(leaders[0], true)}
+          <div className="leader-copy"><strong>{leaders[0].display_name}</strong><small>{leaders[0].best_weight ?? '–'} kg × {leaders[0].best_reps ?? '–'} Wdh.</small></div>
+          <div className="leader-score">{scoreText(leaders[0])}</div>
+        </div>}
+        {leaders.length > 1 && <div className="podium-followers">
+          {leaders.slice(1).map((row, index) => <div className="leader-card leader-compact" key={row.user_id}>
+            <div className="leader-place">Platz {index + 2}</div>
+            {rankingAvatar(row)}
+            <div className="leader-copy"><strong>{row.display_name}</strong><small>{row.best_weight ?? '–'} kg × {row.best_reps ?? '–'}</small></div>
+            <div className="leader-score">{scoreText(row)}</div>
+          </div>)}
+        </div>}
+      </div>
+      {rest.length > 0 && <div className="ranking-list ranking-rest">
+        {rest.map((row, index) => <div className="ranking-row" key={row.user_id}><div className="rank-number">{index + 4}</div>{rankingAvatar(row)}<div className="rank-person"><strong>{row.display_name}</strong><small>{row.best_weight ?? '–'} kg × {row.best_reps ?? '–'} Wdh.</small></div><div className="rank-score">{scoreText(row)}</div></div>)}
+      </div>}
+    </>}
   </section>
 }
 
