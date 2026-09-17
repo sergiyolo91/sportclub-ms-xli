@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { Dumbbell, Trophy, Users, LogOut, Plus, ChevronRight, Flame, Scale } from 'lucide-react'
-import TrainingPanel from './training-panel'
+import { Dumbbell, Trophy, Users, LogOut, Plus, Flame, Scale } from 'lucide-react'
+import DashboardLive from './dashboard-live'
 
 type GroupState = { id: string; name: string; invite_code: string; role: 'ADMIN' | 'MEMBER' } | null
 type Exercise = { id: string; name: string; category: string; measurement_type: string }
@@ -176,7 +176,7 @@ export default function HomePage() {
       <button className="avatar-btn" onClick={() => setTab('gruppe')}>{profileName.slice(0,1).toUpperCase()}</button>
     </header>
 
-    {tab === 'heute' && <Today userId={user.id} group={group} exercises={exercises} />}
+    {tab === 'heute' && <DashboardLive userId={user.id} group={group} exercises={exercises} />}
     {tab === 'fortschritt' && <ProgressScreen userId={user.id} exercises={exercises} />}
     {tab === 'rangliste' && <RankingScreen groupId={group.id} exercises={exercises} />}
     {tab === 'gruppe' && <GroupScreen group={group} profileName={profileName} onLogout={signOut} />}
@@ -188,30 +188,6 @@ export default function HomePage() {
       <NavButton active={tab === 'gruppe'} onClick={() => setTab('gruppe')} icon={<Users size={20}/>} label="Gruppe" />
     </nav>
   </main>
-}
-
-function Today({ userId, group, exercises }: { userId: string; group: NonNullable<GroupState>; exercises: Exercise[] }) {
-  return <>
-    <section className="hero-card">
-      <div className="eyebrow">Heute trainieren</div>
-      <h2>Bereit für die nächste Runde?</h2>
-      <p>Starte direkt ein freies Training oder erfasse ein Home-Workout. Deine Sätze landen sofort in deinem Fortschritt.</p>
-      <TrainingPanel userId={userId} groupId={group.id} exercises={exercises} />
-    </section>
-    <section className="section-block">
-      <div className="section-heading"><h2>Deine Woche</h2><span>Live aus Supabase</span></div>
-      <div className="metric-grid">
-        <div className="metric-card yellow"><strong>–</strong><span>Trainings</span></div>
-        <div className="metric-card lilac"><strong>–</strong><span>PRs</span></div>
-        <div className="metric-card rose"><strong>–</strong><span>Bonus</span></div>
-      </div>
-    </section>
-    <section className="challenge-card"><div className="eyebrow">Wochenbonus</div><h2>Die erste Challenge kommt als Nächstes</h2><p>Gruppen-Challenges und Bonus-Einheiten bauen wir direkt auf der bestehenden Datenbank auf.</p></section>
-    <section className="list-card">
-      <div className="section-heading"><h2>Übungsbibliothek</h2><span>{exercises.length} Übungen</span></div>
-      {exercises.slice(0,5).map(ex => <div className="row" key={ex.id}><div><strong>{ex.name}</strong><small>{ex.category}</small></div><ChevronRight size={18}/></div>)}
-    </section>
-  </>
 }
 
 function ProgressScreen({ userId, exercises }: { userId: string; exercises: Exercise[] }) {
