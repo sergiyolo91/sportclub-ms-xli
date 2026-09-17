@@ -28,6 +28,7 @@ type RankingRow = {
   best_reps: number | null
   best_1rm: number | null
   last_at: string | null
+  avatarUrl?: string | null
 }
 
 export default function HomePage() {
@@ -35,6 +36,7 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true)
   const [user, setUser] = useState<any>(null)
   const [profileName, setProfileName] = useState('')
+  const [profileAvatarUrl, setProfileAvatarUrl] = useState<string | null>(null)
   const [group, setGroup] = useState<GroupState>(null)
   const [exercises, setExercises] = useState<Exercise[]>([])
   const [tab, setTab] = useState<Tab>('heute')
@@ -60,19 +62,34 @@ export default function HomePage() {
     if (!user) {
       setGroup(null)
       setExercises([])
+      setProfileAvatarUrl(null)
       return
     }
     void loadUserData()
   }, [user])
 
+  async function signedAvatar(path: string | null) {
+    if (!path) return null
+    const { data } = await supabase.storage.from('avatars').createSignedUrl(path, 60 * 60)
+    return data?.signedUrl ?? null
+  }
+
+  async function refreshOwnProfile() {
+    if (!user) return
+    const { data: profile } = await supabase.from('profiles').select('display_name,avatar_url').eq('id', user.id).maybeSingle()
+    setProfileName(profile?.display_name || user.user_metadata?.display_name || 'Sportler')
+    setProfileAvatarUrl(await signedAvatar(profile?.avatar_url || null))
+  }
+
   async function loadUserData() {
     setLoading(true)
     const [{ data: profile }, { data: membership }, { data: exerciseRows }] = await Promise.all([
-      supabase.from('profiles').select('display_name').eq('id', user.id).maybeSingle(),
+      supabase.from('profiles').select('display_name,avatar_url').eq('id', user.id).maybeSingle(),
       supabase.from('group_members').select('group_id, role, groups(id,name,invite_code)').eq('user_id', user.id).limit(1).maybeSingle(),
       supabase.from('exercises').select('id,name,category,measurement_type').eq('is_active', true).order('category').order('name'),
     ])
     setProfileName(profile?.display_name || user.user_metadata?.display_name || 'Sportler')
+    setProfileAvatarUrl(await signedAvatar(profile?.avatar_url || null))
     setExercises((exerciseRows as Exercise[]) || [])
     const rawGroup: any = membership?.groups
     const g = Array.isArray(rawGroup) ? rawGroup[0] : rawGroup
@@ -174,13 +191,13 @@ export default function HomePage() {
   return <main className="shell">
     <header className="topbar">
       <div><div className="eyebrow">{group.name}</div><h1 className="title">Hallo {profileName}.</h1></div>
-      <button className="avatar-btn" onClick={() => setTab('gruppe')}>{profileName.slice(0,1).toUpperCase()}</button>
+      <button className="avatar-btn" onClick={() => setTab('gruppe')} aria-label="Profil öffnen">{profileAvatarUrl ? <img src={profileAvatarUrl} alt="" className="avatar-btn-image"/> : profileName.slice(0,1).toUpperCase()}</button>
     </header>
 
     {tab === 'heute' && <DashboardLive userId={user.id} group={group} exercises={exercises} />}
     {tab === 'fortschritt' && <ProgressScreen userId={user.id} exercises={exercises} />}
     {tab === 'rangliste' && <RankingScreen groupId={group.id} exercises={exercises} />}
-    {tab === 'gruppe' && <GroupPanel userId={user.id} group={group} onLogout={signOut} />}
+    {tab === 'gruppe' && <GroupPanel userId={user.id} group={group} onLogout={signOut} onProfileUpdated={refreshOwnProfile} />}
 
     <nav className="bottom-nav">
       <NavButton active={tab === 'heute'} onClick={() => setTab('heute')} icon={<Dumbbell size={20}/>} label="Heute" />
@@ -252,7 +269,21 @@ function RankingScreen({ groupId, exercises }: { groupId: string; exercises: Exe
 
   async function load() {
     const { data } = await supabase.rpc('get_group_ranking', { p_group_id: groupId, p_exercise_id: exerciseId, p_mode: mode })
-    setRows((data as RankingRow[]) || [])
+    const rankingRows = ((data as RankingRow[]) || []).map(row => ({ ...row, avatarUrl: null }))
+    const userIds = rankingRows.map(row => row.user_id)
+    if (!userIds.length) {
+      setRows([])
+      return
+    }
+
+    const { data: profiles } = await supabase.from('profiles').select('id,avatar_url').in('id', userIds)
+    const avatarPairs = await Promise.all((profiles || []).map(async (profile: any) => {
+      if (!profile.avatar_url) return [profile.id, null] as const
+      const { data: signed } = await supabase.storage.from('avatars').createSignedUrl(profile.avatar_url, 60 * 60)
+      return [profile.id, signed?.signedUrl ?? null] as const
+    }))
+    const avatarMap = new Map<string, string | null>(avatarPairs)
+    setRows(rankingRows.map(row => ({ ...row, avatarUrl: avatarMap.get(row.user_id) ?? null })))
   }
 
   function scoreText(row: RankingRow) {
@@ -271,7 +302,7 @@ function RankingScreen({ groupId, exercises }: { groupId: string; exercises: Exe
       <button className={mode === 'progress' ? 'active' : ''} onClick={() => setMode('progress')}>+90 Tage</button>
     </div>
     {rows.length === 0 ? <div className="podium-empty"><Trophy size={34}/><strong>Die Rangliste wartet auf eure ersten Trainings.</strong></div> : <div className="ranking-list">
-      {rows.map((row, index) => <div className="ranking-row" key={row.user_id}><div className="rank-number">{index + 1}</div><div className="rank-person"><strong>{row.display_name}</strong><small>{row.best_weight ?? '–'} kg × {row.best_reps ?? '–'} Wdh.</small></div><div className="rank-score">{scoreText(row)}</div></div>)}
+      {rows.map((row, index) => <div className="ranking-row" key={row.user_id}><div className="rank-number">{index + 1}</div><div className="rank-avatar">{row.avatarUrl ? <img src={row.avatarUrl} alt=""/> : <span>{row.display_name.slice(0,1).toUpperCase()}</span>}</div><div className="rank-person"><strong>{row.display_name}</strong><small>{row.best_weight ?? '–'} kg × {row.best_reps ?? '–'} Wdh.</small></div><div className="rank-score">{scoreText(row)}</div></div>)}
     </div>}
   </section>
 }
