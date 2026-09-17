@@ -85,6 +85,11 @@ export default function HomePage() {
     setProfileAvatarUrl(await signedAvatar(profile?.avatar_url || null))
   }
 
+  async function refreshExercises() {
+    const { data } = await supabase.from('exercises').select('id,name,category,measurement_type').eq('is_active', true).order('category').order('name')
+    setExercises((data as Exercise[]) || [])
+  }
+
   async function loadUserData() {
     setLoading(true)
     const [{ data: profile }, { data: membership }, { data: exerciseRows }] = await Promise.all([
@@ -207,7 +212,7 @@ export default function HomePage() {
       {tab === 'heute' && <DashboardLive userId={user.id} group={group} exercises={exercises} />}
       {tab === 'fortschritt' && <ProgressScreen userId={user.id} exercises={exercises} />}
       {tab === 'rangliste' && <RankingScreen groupId={group.id} exercises={exercises} />}
-      {tab === 'gruppe' && <GroupPanel userId={user.id} group={group} onLogout={signOut} onProfileUpdated={refreshOwnProfile} />}
+      {tab === 'gruppe' && <GroupPanel userId={user.id} group={group} onLogout={signOut} onProfileUpdated={refreshOwnProfile} onExercisesUpdated={refreshExercises} />}
     </div>
 
     <nav className="bottom-nav">
