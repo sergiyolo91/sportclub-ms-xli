@@ -4,13 +4,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { ArrowDown, ArrowUp, Camera, Copy, Dumbbell, Flame, LogOut, Pencil, Plus, Scale, Trash2, Users, X } from 'lucide-react'
 import styles from './features.module.css'
+import ExerciseManager from './exercise-manager'
 
 type Group = { id: string; name: string; invite_code: string; role: 'ADMIN' | 'MEMBER' }
 type Member = { user_id: string; role: 'ADMIN' | 'MEMBER'; display_name: string; avatar_path: string | null; avatar_url: string | null }
 type Exercise = { id: string; name: string; category: string; measurement_type: string }
 type GroupTemplate = { id: string; name: string; exercises: Exercise[] }
 
-export default function GroupPanel({ userId, group, onLogout, onProfileUpdated }: { userId: string; group: Group; onLogout: () => void; onProfileUpdated?: () => void | Promise<void> }) {
+export default function GroupPanel({ userId, group, onLogout, onProfileUpdated, onExercisesUpdated }: { userId: string; group: Group; onLogout: () => void; onProfileUpdated?: () => void | Promise<void>; onExercisesUpdated?: () => void | Promise<void> }) {
   const supabase = useMemo(() => createClient(), [])
   const fileRef = useRef<HTMLInputElement>(null)
   const [members, setMembers] = useState<Member[]>([])
@@ -235,6 +236,15 @@ export default function GroupPanel({ userId, group, onLogout, onProfileUpdated }
       <span>Einladungscode</span><strong>{group.invite_code}</strong><small>{members.length} {members.length === 1 ? 'Mitglied' : 'Mitglieder'}</small>
       <button className={styles.avatarButton} onClick={copyCode}><Copy size={15}/>{copied ? 'Kopiert' : 'Code kopieren'}</button>
     </div>
+
+    <ExerciseManager
+      userId={userId}
+      group={group}
+      onChanged={async () => {
+        await loadTemplates()
+        await onExercisesUpdated?.()
+      }}
+    />
 
     <div className={styles.sectionCard}>
       <div className={styles.sectionHead}><h3><Dumbbell size={17}/> Trainingstage</h3><span>{templates.length}</span></div>
