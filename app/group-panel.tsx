@@ -10,7 +10,7 @@ type Member = { user_id: string; role: 'ADMIN' | 'MEMBER'; display_name: string;
 type Exercise = { id: string; name: string; category: string; measurement_type: string }
 type GroupTemplate = { id: string; name: string; exercises: Exercise[] }
 
-export default function GroupPanel({ userId, group, onLogout }: { userId: string; group: Group; onLogout: () => void }) {
+export default function GroupPanel({ userId, group, onLogout, onProfileUpdated }: { userId: string; group: Group; onLogout: () => void; onProfileUpdated?: () => void | Promise<void> }) {
   const supabase = useMemo(() => createClient(), [])
   const fileRef = useRef<HTMLInputElement>(null)
   const [members, setMembers] = useState<Member[]>([])
@@ -106,6 +106,7 @@ export default function GroupPanel({ userId, group, onLogout }: { userId: string
     if (avatarPath && avatarPath !== path) await supabase.storage.from('avatars').remove([avatarPath])
     setMessage('Profilbild gespeichert.')
     await Promise.all([loadProfile(), loadMembers()])
+    await onProfileUpdated?.()
     setBusy(false)
   }
 
