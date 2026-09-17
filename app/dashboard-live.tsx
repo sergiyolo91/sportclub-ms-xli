@@ -12,6 +12,7 @@ type FeedItem = {
   id: string
   userId: string
   name: string
+  avatarUrl: string | null
   type: string
   title: string
   detail: string
@@ -63,26 +64,33 @@ export default function DashboardLive({ userId, group, exercises }: { userId: st
     const challengeIds = [...new Set(activities.map(a => a.challenge_id).filter(Boolean))]
 
     const [profiles, workoutData, exerciseData, challengeData] = await Promise.all([
-      userIds.length ? supabase.from('profiles').select('id,display_name').in('id', userIds) : Promise.resolve({ data: [] as any[] }),
+      userIds.length ? supabase.from('profiles').select('id,display_name,avatar_url').in('id', userIds) : Promise.resolve({ data: [] as any[] }),
       workoutIds.length ? supabase.from('workouts').select('id,title,workout_type').in('id', workoutIds) : Promise.resolve({ data: [] as any[] }),
       exerciseIds.length ? supabase.from('exercises').select('id,name').in('id', exerciseIds) : Promise.resolve({ data: [] as any[] }),
       challengeIds.length ? supabase.from('challenges').select('id,title').in('id', challengeIds) : Promise.resolve({ data: [] as any[] }),
     ])
 
     const nameMap = new Map((profiles.data || []).map((p: any) => [p.id, p.display_name]))
+    const avatarPairs = await Promise.all((profiles.data || []).map(async (profile: any) => {
+      if (!profile.avatar_url) return [profile.id, null] as const
+      const { data: signed } = await supabase.storage.from('avatars').createSignedUrl(profile.avatar_url, 60 * 60)
+      return [profile.id, signed?.signedUrl ?? null] as const
+    }))
+    const avatarMap = new Map<string, string | null>(avatarPairs)
     const workoutMap = new Map((workoutData.data || []).map((w: any) => [w.id, w]))
     const exerciseMap = new Map((exerciseData.data || []).map((e: any) => [e.id, e.name]))
     const challengeMap = new Map((challengeData.data || []).map((c: any) => [c.id, c.title]))
 
     setFeed(activities.map((a: any) => {
       const name = nameMap.get(a.user_id) || 'Mitglied'
+      const avatarUrl = avatarMap.get(a.user_id) ?? null
       const workout = a.workout_id ? workoutMap.get(a.workout_id) : null
       const exercise = a.exercise_id ? exerciseMap.get(a.exercise_id) : null
       const challengeTitle = a.challenge_id ? challengeMap.get(a.challenge_id) : null
-      if (a.activity_type === 'PERSONAL_RECORD') return { id: a.id, userId: a.user_id, name, type: a.activity_type, title: `${name} · neuer PR`, detail: exercise || 'Persönlicher Rekord', createdAt: a.created_at }
-      if (a.activity_type === 'HOME_WORKOUT_COMPLETED') return { id: a.id, userId: a.user_id, name, type: a.activity_type, title: `${name} · Zuhause trainiert`, detail: workout?.title || 'Home-Workout', createdAt: a.created_at }
-      if (a.activity_type === 'CHALLENGE_COMPLETED') return { id: a.id, userId: a.user_id, name, type: a.activity_type, title: `${name} · Challenge geschafft`, detail: challengeTitle || 'Wochenchallenge', createdAt: a.created_at }
-      return { id: a.id, userId: a.user_id, name, type: a.activity_type, title: `${name} · Training abgeschlossen`, detail: workout?.title || 'Training', createdAt: a.created_at }
+      if (a.activity_type === 'PERSONAL_RECORD') return { id: a.id, userId: a.user_id, name, avatarUrl, type: a.activity_type, title: `${name} · neuer PR`, detail: exercise || 'Persönlicher Rekord', createdAt: a.created_at }
+      if (a.activity_type === 'HOME_WORKOUT_COMPLETED') return { id: a.id, userId: a.user_id, name, avatarUrl, type: a.activity_type, title: `${name} · Zuhause trainiert`, detail: workout?.title || 'Home-Workout', createdAt: a.created_at }
+      if (a.activity_type === 'CHALLENGE_COMPLETED') return { id: a.id, userId: a.user_id, name, avatarUrl, type: a.activity_type, title: `${name} · Challenge geschafft`, detail: challengeTitle || 'Wochenchallenge', createdAt: a.created_at }
+      return { id: a.id, userId: a.user_id, name, avatarUrl, type: a.activity_type, title: `${name} · Training abgeschlossen`, detail: workout?.title || 'Training', createdAt: a.created_at }
     }))
 
     const activeChallenge = challengeRows.data?.[0] as any
@@ -159,9 +167,9 @@ export default function DashboardLive({ userId, group, exercises }: { userId: st
     <section className="list-card activity-card">
       <div className="section-heading"><h2>{group.name} Aktivität</h2><span>{feed.length ? 'Live' : 'Noch ruhig'}</span></div>
       {feed.length === 0 ? <div className="empty-feed"><Dumbbell size={24}/><p>Nach euren ersten Trainings erscheinen hier PRs, Home-Workouts und Challenges.</p></div> : feed.map(item => <div className="activity-row" key={item.id}>
-        <div className={`activity-icon ${item.type === 'PERSONAL_RECORD' ? 'pr' : item.type === 'HOME_WORKOUT_COMPLETED' ? 'home' : item.type === 'CHALLENGE_COMPLETED' ? 'challenge' : ''}`}>
+        {item.avatarUrl ? <img src={item.avatarUrl} alt="" className="activity-avatar"/> : <div className={`activity-icon ${item.type === 'PERSONAL_RECORD' ? 'pr' : item.type === 'HOME_WORKOUT_COMPLETED' ? 'home' : item.type === 'CHALLENGE_COMPLETED' ? 'challenge' : ''}`}>
           {item.type === 'PERSONAL_RECORD' ? <Trophy size={17}/> : item.type === 'HOME_WORKOUT_COMPLETED' ? <Home size={17}/> : item.type === 'CHALLENGE_COMPLETED' ? <Flame size={17}/> : <Dumbbell size={17}/>}
-        </div>
+        </div>}
         <div className="activity-copy"><strong>{item.title}</strong><small>{item.detail} · {when(item.createdAt)}</small></div>
         <ChevronRight size={16}/>
       </div>)}
