@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Dumbbell, Trophy, Users, LogOut, Plus, Flame, Scale } from 'lucide-react'
 import DashboardLive from './dashboard-live'
+import GroupPanel from './group-panel'
 
 type GroupState = { id: string; name: string; invite_code: string; role: 'ADMIN' | 'MEMBER' } | null
 type Exercise = { id: string; name: string; category: string; measurement_type: string }
@@ -179,7 +180,7 @@ export default function HomePage() {
     {tab === 'heute' && <DashboardLive userId={user.id} group={group} exercises={exercises} />}
     {tab === 'fortschritt' && <ProgressScreen userId={user.id} exercises={exercises} />}
     {tab === 'rangliste' && <RankingScreen groupId={group.id} exercises={exercises} />}
-    {tab === 'gruppe' && <GroupScreen group={group} profileName={profileName} onLogout={signOut} />}
+    {tab === 'gruppe' && <GroupPanel userId={user.id} group={group} onLogout={signOut} />}
 
     <nav className="bottom-nav">
       <NavButton active={tab === 'heute'} onClick={() => setTab('heute')} icon={<Dumbbell size={20}/>} label="Heute" />
@@ -273,10 +274,6 @@ function RankingScreen({ groupId, exercises }: { groupId: string; exercises: Exe
       {rows.map((row, index) => <div className="ranking-row" key={row.user_id}><div className="rank-number">{index + 1}</div><div className="rank-person"><strong>{row.display_name}</strong><small>{row.best_weight ?? '–'} kg × {row.best_reps ?? '–'} Wdh.</small></div><div className="rank-score">{scoreText(row)}</div></div>)}
     </div>}
   </section>
-}
-
-function GroupScreen({ group, profileName, onLogout }: { group: NonNullable<GroupState>; profileName: string; onLogout: () => void }) {
-  return <section className="screen-pad"><div className="eyebrow">Deine Gruppe</div><h2 className="screen-title">{group.name}</h2><div className="group-code"><span>Einladungscode</span><strong>{group.invite_code}</strong><small>Zum Einladen einfach weitergeben</small></div><div className="list-card"><div className="row"><div><strong>{profileName}</strong><small>{group.role === 'ADMIN' ? 'Admin' : 'Mitglied'}</small></div><div className="mini-avatar">{profileName.slice(0,1).toUpperCase()}</div></div></div><button className="logout-btn" onClick={onLogout}><LogOut size={18}/> Abmelden</button></section>
 }
 
 function NavButton({ active, onClick, icon, label }: { active:boolean; onClick:()=>void; icon:React.ReactNode; label:string }) {
